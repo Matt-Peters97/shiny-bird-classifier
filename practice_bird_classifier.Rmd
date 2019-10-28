@@ -1,0 +1,620 @@
+---
+title: "ShinyImage - A Handy Image Classification Application"
+output: 
+  flexdashboard::flex_dashboard:
+    themes: spacelab
+    orientation: rows
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# Initiates the libraries with the functions required for the app to work. 
+
+library(flexdashboard) # used for the design of the app
+library(devtools) # used to access the base commands in R
+library(keras) # used to build and launch Tensorflow models in R
+library(knitr) # used to create the output application
+library(DT) # used to instigate connection to the shiny server
+library(shiny) # used to access the functions for shiny applications
+library(tidyr) # used for data manipulation tools, notably filtering
+library(dplyr) # used most specifically for piping commands (%>%)
+```
+
+```{r layout description, include = FALSE}
+## Flexdashboards are characterised by blocks comprising the overall layout of the page. Whilst basic shiny applications allow for manual spacing of rows and columns, flexdashboards support specific presets for HTML design elements that allows for intuitive app design. 
+
+## We begin with the sidebar, which is one such element.
+```
+
+Sidebar {.sidebar} 
+-------------------------------------
+
+```{r purpose, include = FALSE}
+# Adds a paragraph at the top of the sidebar element entitled 'Purpose', with a short description of the application's function, data and backend.
+```
+
+__Purpose__
+The purpose of this application is to provide intuitive and easy image classification with state-of-the-art imageNet architectures trained on the CUB200-2011 dataset. This tool can be used by anyone, just insert a bird image and see what species the models predict it to belong to! For a list of further information on the dataset and the bird species on which the models have been trained, see:   http://www.vision.caltech.edu/visipedia/CUB-200-2011.html 
+
+```{r models, include = FALSE}
+# Includes a short list of the Convolutional Neural Networks used in the applicationand their accompanying references to the published work below the purpose.
+```
+
+__Models__
+Each model used is available through the Keras deep learning library in R (Chollet, 2017). The models and their associated papers are listed below:
+
+*   __Inception_ResNET_V2__ (Szegedy, Vanhoucke, Ioffe, Shlens, Wojna, 2016)
+*   __Xception__ (Chollet, 2017)
+*   __Inception_V3__ (GoogLeNet; Szegedy et al., 2015)
+*   __Mobilenet_V2__  (Szegedy et al., 2017)
+*   __ResNet50__ (He, Zhang, Ren & Sun, 2015)
+*   __DenseNet201__ (Huang, Liu, Van Der Maaten, & Weinberger, 2017)
+*   __VGG19__ (Simonyan and Zisserman, 2014)
+  
+
+### File Selection
+
+```{r, file selection}
+## This block represents the area where the user inserts their image from file. As we are still within the sidebar panel, this appears beneath the description of the purpose and models. This is done to maximise the space on screen for the image and the predictions.
+
+# Creates an element for selecting a file to upload to the application. This element is coerced to accepting only files with .jpg, .jpeg or .png extension to denote to prevent users uploading files that are not images. 
+fileInput("image1", "Please select an image from file:", accept = c(".jpg", ".jpeg", ".png"))
+
+# directly calls HTML elements. 
+tags$em("Please click the box to upload a file")
+tags$br()
+tags$b("Ensure the selected image is of .jpg, .png or .jpeg file type")
+
+```
+
+column
+-------------------------------------
+
+### Your Bird Image
+```{r}
+
+renderImage({
+  req(input$image1)
+  
+    src <- input$image1
+    src <- src$datapath
+    if (is.null(src)) {
+      "Please insert image"
+    } else {
+      list(src = src,
+         height = 400,
+         width = 400)
+    }
+  }, deleteFile = FALSE)
+```
+
+```{r}
+
+fluidRow(
+  column(width = 5, height = 2, offset = 6,
+          imageOutput("birdOutput", height = 350,
+                       # Equivalent to: click = clickOpts(id = "plot_click")
+                      click = "plot_click",
+                      dblclick = dblclickOpts(
+                       id = "plot_dblclick"
+                       ),
+                      hover = hoverOpts(
+                       id = "plot_hover"
+                       ),
+                      brush = brushOpts(
+                        id = "plot_brush"
+                      )
+         )
+   ),
+    
+   fluidRow(
+      column(width = 3,
+             verbatimTextOutput("click_info")
+      ),
+      column(width = 3,
+             verbatimTextOutput("dblclick_info")
+      ),
+      column(width = 3,
+             verbatimTextOutput("hover_info")
+      ),
+      column(width = 3,
+             verbatimTextOutput("brush_info")
+      )
+    )
+  )
+
+
+
+  output$birdOutput <- renderImage({
+    req(input$image1) # checks for value
+    
+    outfile <- input$image1$datapath # takes file from temporary storage
+    contentType <- input$image1$type # extracts the type of file
+    list(src = outfile, # src = location of file, which is stored in 'outfile'
+         contentType=contentType,
+         width = 400)
+  }, deleteFile = TRUE)
+  
+  output$click_info <- renderPrint({
+    cat("input$plot_click:\n")
+    str(input$plot_click)
+  })
+  output$hover_info <- renderPrint({
+    cat("input$plot_hover:\n")
+    str(input$plot_hover)
+  })
+  output$dblclick_info <- renderPrint({
+    cat("input$plot_dblclick:\n")
+    str(input$plot_dblclick)
+  })
+  output$brush_info <- renderPrint({
+    cat("input$plot_brush:\n")
+    str(input$plot_brush)
+    })
+  
+```
+
+```{r, global, include = FALSE}
+## Load the models
+# Here the path is referring to the current working directory. If downloading the .h5 files from repo, either add the downloaded files to your current working directory or change the file path to an absolute path that references the files. 
+
+# Inception ResNet-V2
+inception_resnet_v2<-load_model_hdf5("./Inception_Resnet_v2.h5")
+
+# Xception
+xception <- load_model_hdf5("./Xception.h5")
+
+# Inception-V3
+inception_v3 <- load_model_hdf5("./Inception_v3.h5")
+
+# Mobilenet-V2
+mobilenet_v2 <- load_model_hdf5("./MobileNet_v2.h5")
+
+# ResNet50
+resnet50 <- load_model_hdf5("./ResNET50.h5")
+
+# DenseNet201
+densenet201 <- load_model_hdf5("./DenseNET201.h5")
+
+# VGG19
+vgg19 <- load_model_hdf5("./VGG19.h5")
+
+# Define the classes
+classes <- c("Black Footed Albatross",
+             "Laysan Albatross",
+             "Sooty Albatross",
+             "Groove Billed Ani",
+             "Crested Auklet",
+             "Least Auklet",
+             "Parakeet Auklet",
+             "Rhinoceros Auklet",
+             "Brewer Blackbird",
+             "Red Winged Blackbird",
+             "Rusty Blackbird",
+             "Yellow-Headed Blackbird",
+             "Bobolink",
+             "Indigo Bunting",
+             "Lazuli Bunting",
+             "Painted Bunting",
+             "Cardinal",
+             "Spotted Catbird",
+             "Gray Catbird",
+             "Yellow Breasted Chat",
+             "Eastern Towhee",
+             "Chuck Will Widow",
+             "Brandt Cormorant",
+             "Red faced Cormorant",
+             "Pelagic Comorant",
+             "Bronzed Crowbird",
+             "Shiny Cowbird",
+             "Brown Creeper",
+             "American Crow",
+             "Fish Crow",
+             "Black Billed Cuckoo",
+             "Mangrove Cuckoo",
+             "Yellow Billed Cuckoo",
+             "Gray crowned Rosy Finch",
+             "Purple Finch",
+             "Northern Flicker",
+             "Arcadian Flycatcher",
+             "Great Crested Flycatcher",
+             "Least Flycatcher",
+             "Olive Sided Flycatcher",
+             "Scissor Tailed Flycatcher",
+             "Vermilion Flycatcher",
+             "Yellow Bellied Flycatcher",
+             "Frigatebird",
+             "Northern Fulmar",
+             "Gadwall",
+             "American Goldfinch",
+             "European Goldfinch",
+             "Boat Tailed Grackle",
+             "Eared Grebe",
+             "Horned Grebe",
+             "Pied Billed Greb",
+             "Western Grebe",
+             "Blue Grosbeak",
+             "Evening Grosbeak",
+             "Pine Grosbeak",
+             "Rose Breasted Grosbeak",
+             "Pigeon Guillemont",
+             "California Gull",
+             "Glaucous Winged Gull",
+             "Heermann Gull",
+             "Herring Gull",
+             "Ivory Gull",
+             "Ring Billed Gull",
+             "Slaty Backed Gull",
+             "Western Gull",
+             "Anna Hummingbird",
+             "Ruby Throated Hummingbird",
+             "Rufous Hummingbird",
+             "Green Violetear",
+             "Long Tailed Jaeger",
+             "Pomarine Jaeger",
+             "Blue Jay",
+             "Florida Jay",
+             "Green Jay",
+             "Dark Eyed Junco",
+             "Tropical Kingbird",
+             "Gray Kingbird",
+             "Belted Kingfisher",
+             "Green Kingfisher",
+             "Pied Kingfisher",
+             "Ringed Kingfisher",
+             "White Breasted Kingfisher",
+             "Red Legged Kittiwake",
+             "Horned Lark",
+             "Pacific Loon",
+             "Mallard",
+             "Western Meadowlark",
+             "Hooded Merganser",
+             "Red Breasted Merganser",
+             "Mockingbird",
+             "Nighthawk",
+             "Clark Nutcracker",
+             "White Breasted Nuthatch",
+             "Baltimore Oriole",
+             "Hooded Oriole",
+             "Orchard Oriole",
+             "Scott Oriole",
+             "Ovenbird",
+             "Brown Pelican",
+             "White Pelican",
+             "Western Wood Pewee",
+             "Sayornis",
+             "American Pipit",
+             "Whip Poor Will",
+             "Horned Puffin",
+             "Common Raven",
+             "White Necked Raven",
+             "American Redstart",
+             "Geococcyx",
+             "Loggedhead Shrike",
+             "Great Grey Shrike",
+             "Baird Sparrow",
+             "Black Throated Sparrow",
+             "Brewer Sparrow",
+             "Chipping Sparrow",
+             "Clay Colored Sparrow",
+             "House Sparrow",
+             "Field Sparrow",
+             "Fox Sparrow",
+             "Grasshopper Sparrow",
+             "Harris Sparrow",
+             "Henslow Sparrow",
+             "Le Conte Sparrow",
+             "Lincoln Sparrow",
+             "Nelson Sharp tailed Sparrow",
+             "Savannah Sparrow",
+             "Seaside Sparrow",
+             "Song Sparrow",
+             "Tree Sparrow",
+             "Vesper Sparrow",
+             "White Crowned Sparrow",
+             "White Throated Sparrow",
+             "Cape Glossy Starling",
+             "Bank Swallow",
+             "Barn Swallow",
+             "Cliff Swallow",
+             "Tree Swallow",
+             "Scarlet Tanager",
+             "Summer Tanager",
+             "Artic Tern",
+             "Black Tern",
+             "Caspian Tern",
+             "Common Tern",
+             "Elegant Tern",
+             "Forsters Tern",
+             "Least Tern",
+             "Green Tailed Towhee",
+             "Brown Thrasher",
+             "Sage Thrasher",
+             "Black Capped Vireo",
+             "Blue Headed Vireo",
+             "Philadelphia Vireo",
+             "Red Eyed Vireo",
+             "Warbling Vireo",
+             "White Eyed Vireo",
+             "Yellow Throated Vireo",
+             "Bay Breasted Warbler",
+             "Black and White Warbler",
+             "Black Throated Blue Warbler",
+             "Blue Winged Warbler",
+             "Canada Warbler",
+             "Cape May Warbler",
+             "Cerulean Warbler",
+             "Chestnut Sided Warbler",
+             "Golden Winged Warbler",
+             "Hooded Warbler",
+             "Kentucky Warbler",
+             "Magnolia Warbler",
+             "Mourning Warbler",
+             "Myrtle Warbler",
+             "Nashville Warbler",
+             "Orange Crowned Warbler",
+             "Palm Warbler",
+             "Pine Warbler",
+             "Prairie Warbler",
+             "Prothonotary Warbler",
+             "Swainson Warbler",
+             "Tennessee Warbler",
+             "Wilson Warbler",
+             "Worm Eating Warbler",
+             "Yellow Warbler",
+             "Northern Waterthrush",
+             "Louisiana Waterthrush",
+             "Boheamian Waxwing",
+             "Cedar Waxwing",
+             "American Three Toed Woodpecker",
+             "Pileated Woodpecker",
+             "Red Bellied Woodpecker",
+             "Red Cockaded Woodpecker",
+             "Red Headed Woodpecker",
+             "Downy Woodpecker",
+             "Bewick Wren",
+             "Cactus Wren",
+             "Carolina Wren",
+             "House Wren",
+             "Marsh Wren",
+             "Rock Wren",
+             "Winter Wren",
+             "Common Yellowthroat")
+
+```
+
+Row {.tabset}
+----------------------------------------------------------------------
+
+### Inception_Resnet_V2
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- inception_resnet_v2 %>% predict(x) # gives the confidence predictions
+    Iresdf <- data.frame(preds) # creates dataframe for predictions
+    names(Iresdf) <- classes # assigns classes to predictions
+    Iresdf <- gather(Iresdf)
+    colnames(Iresdf) <- c("Species", "Predictions")
+    
+    Irestop_five <- Iresdf %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(Irestop_five)
+  }) # End of progress
+  })
+```
+
+
+### Xception
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor of shape 1 * 224 * 224 * 3
+    
+    preds <- xception %>% predict(x) # gives the confidence predictions
+    Xcepdf <- data.frame(preds) # creates dataframe for predictions
+    names(Xcepdf) <- classes # assigns classes to predictions
+    Xcepdf <- gather(Xcepdf)
+    colnames(Xcepdf) <- c("Species", "Predictions")
+    
+    Xceptop_five <- Xcepdf %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(Xceptop_five)
+  }) # End of progress
+  })
+```
+
+### inception_v3
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(299, 299)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- inception_v3 %>% predict(x) # gives the confidence predictions
+    Incepdf <- data.frame(preds) # creates dataframe for predictions
+    names(Incepdf) <- classes # assigns classes to predictions
+    Incepdf <- gather(Incepdf)
+    colnames(Incepdf) <- c("Species", "Predictions")
+    
+    Inceptop_five <- Incepdf %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(Inceptop_five)
+  }) # End of progress
+  })
+```
+
+### mobilenet_v2
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- mobilenet_v2 %>% predict(x) # gives the confidence predictions
+    df <- data.frame(preds) # creates dataframe for predictions
+    names(df) <- classes # assigns classes to predictions
+    df2 <- gather(df)
+    colnames(df2) <- c("Species", "Predictions")
+    
+    top_five <- df2 %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(top_five)
+  }) # End of progress
+  })
+```
+
+### resnet50
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- resnet50 %>% predict(x) # gives the confidence predictions
+    df <- data.frame(preds) # creates dataframe for predictions
+    names(df) <- classes # assigns classes to predictions
+    df2 <- gather(df)
+    colnames(df2) <- c("Species", "Predictions")
+    
+    top_five <- df2 %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(top_five)
+  }) # End of progress
+  })
+```
+
+### densenet201
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) 
+    x <- {x/255} # flatten to array
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- densenet201 %>% predict(x) # gives the confidence predictions
+    df <- data.frame(preds) # creates dataframe for predictions
+    names(df) <- classes # assigns classes to predictions
+    df2 <- gather(df)
+    colnames(df2) <- c("Species", "Predictions")
+    
+    top_five <- df2 %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(top_five)
+  }) # End of progress
+  })
+```
+
+### vgg19
+
+```{r}
+renderTable({
+  
+  
+  inputImage<- input$image1
+    if (is.null(inputImage))
+      return(NULL)
+
+  
+  withProgress(message = "Analysing image, please wait...", value = 1, {
+    
+    image_path <- inputImage$datapath
+    image <- image_load(image_path, target_size = c(224, 224)) # has to be according to ResNET architecture
+    x <- image_to_array(image) # flatten to array
+    x <- {x/255}
+    x <- array_reshape(x, c(1, dim(x))) # reshape to 4d tensor
+    
+    preds <- vgg19 %>% predict(x) # gives the confidence predictions
+    df <- data.frame(preds) # creates dataframe for predictions
+    names(df) <- classes # assigns classes to predictions
+    df2 <- gather(df)
+    colnames(df2) <- c("Species", "Predictions")
+    
+    top_five <- df2 %>%
+      filter(rank(desc(Predictions)) <= 5)
+ 
+    return(top_five)
+  }) # End of progress
+  })
+```
